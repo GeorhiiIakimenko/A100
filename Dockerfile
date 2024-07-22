@@ -2,8 +2,8 @@
 FROM python:3.8-slim
 
 # Set environment variables
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
+ARG PYTHONDONTWRITEBYTECODE=1
+ARG PYTHONUNBUFFERED=1
 
 # Set the working directory in the container
 WORKDIR /app
@@ -27,12 +27,10 @@ RUN pip install chromadb
 # Copy the rest of the application code
 COPY . .
 
-# Copy .env file
-COPY .env .env
-
 # Expose the port that FastAPI runs on
 EXPOSE 8222
 
 # Command to run the application
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8222"]
+
 
