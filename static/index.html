@@ -175,6 +175,16 @@
                 opacity: 1;
             }
         }
+        .chat-item {
+            padding: 10px;
+            border-bottom: 1px solid #ddd;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .chat-item .chat-title {
+            flex: 1;
+        }
     </style>
 </head>
 <body>
@@ -396,8 +406,10 @@
             chatElement.dataset.chatId = chatId;
             chatElement.innerHTML = `
                 <div class="chat-title">Новый чат</div>
+                <button class="select-chat">Выбрать</button>
                 <button class="delete-chat">Удалить</button>
             `;
+            chatElement.querySelector('.select-chat').onclick = () => switchChat(chatId);
             chatElement.querySelector('.delete-chat').onclick = () => deleteChat(chatId);
             chatList.appendChild(chatElement);
             switchChat(chatId);
@@ -432,6 +444,11 @@
             chatTitle.textContent = `Чат ${chatId}`;
             chat.innerHTML = '';
         }
+
+        // Привязка событий к кнопкам
+        document.getElementById('new-chat').onclick = createNewChat;
+        document.getElementById('delete-chat').onclick = deleteCurrentChat;
     </script>
 </body>
 </html>
+
