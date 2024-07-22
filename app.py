@@ -34,7 +34,7 @@ GOOGLE_CLIENT_ID = os.getenv("add")
 GOOGLE_CLIENT_SECRET = os.getenv("add")
 SECRET_KEY = os.getenv("123456789")
 
-os.environ['OPENAI_API_KEY'] = 'sk-proj-SjpYPMtlXRJbmbVPPZKWT3BlbkFJy9I5kiKHuZ719fKXlD7t'
+os.environ['OPENAI_API_KEY'] = 'sk-proj-vuPThMEo2Tg4UVdsCinsT3BlbkFJRLmCIQbF2kAykbtMcB5X'
 
 model_name = "gpt-4o"
 temperature = 0
