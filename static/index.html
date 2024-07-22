@@ -175,15 +175,23 @@
                 opacity: 1;
             }
         }
-        .chat-item {
+        .logout-container {
             padding: 10px;
-            border-bottom: 1px solid #ddd;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+            border-top: 1px solid #ddd;
+            background-color: #fff;
+            text-align: center;
         }
-        .chat-item .chat-title {
-            flex: 1;
+        .logout-button {
+            padding: 10px 20px;
+            border: none;
+            background-color: #dc3545;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .logout-button:hover {
+            background-color: #c82333;
         }
     </style>
 </head>
@@ -214,6 +222,9 @@
                 <input type="text" id="message" placeholder="Введите сообщение">
                 <button id="send">Отправить</button>
             </div>
+            <div class="logout-container">
+                <button class="logout-button" id="logout">Выход</button>
+            </div>
         </div>
     </div>
 
@@ -225,10 +236,11 @@
         const chatList = document.getElementById('chat-list');
         const chatTitle = document.getElementById('chat-title');
         const deleteChatButton = document.getElementById('delete-chat');
+        const logoutButton = document.getElementById('logout');
         let currentChatId = null;
 
         // Создаем WebSocket соединение
-        const socket = new WebSocket(`ws://localhost:8222/ws/rag_chat/`);
+        const socket = new WebSocket(`ws://worker-production-645b/ws/rag_chat/`);
 
         let typingIndicator;
 
@@ -274,6 +286,10 @@
 
         deleteChatButton.onclick = function() {
             deleteCurrentChat();
+        };
+
+        logoutButton.onclick = function() {
+            window.location.href = "/login";
         };
 
         function sendMessage() {
@@ -406,11 +422,11 @@
             chatElement.dataset.chatId = chatId;
             chatElement.innerHTML = `
                 <div class="chat-title">Новый чат</div>
-                <button class="select-chat">Выбрать</button>
                 <button class="delete-chat">Удалить</button>
+                <button class="select-chat">Выбрать</button>
             `;
-            chatElement.querySelector('.select-chat').onclick = () => switchChat(chatId);
             chatElement.querySelector('.delete-chat').onclick = () => deleteChat(chatId);
+            chatElement.querySelector('.select-chat').onclick = () => switchChat(chatId);
             chatList.appendChild(chatElement);
             switchChat(chatId);
         }
@@ -444,11 +460,9 @@
             chatTitle.textContent = `Чат ${chatId}`;
             chat.innerHTML = '';
         }
-
-        // Привязка событий к кнопкам
-        document.getElementById('new-chat').onclick = createNewChat;
-        document.getElementById('delete-chat').onclick = deleteCurrentChat;
     </script>
 </body>
+</html>
+
 </html>
 
