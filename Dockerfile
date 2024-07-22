@@ -24,6 +24,8 @@ RUN pip install --upgrade pip \
 # Установите chromadb
 RUN pip install chromadb
 
+ENV OPENAI_API_KEY='sk-proj-SjpYPMtlXRJbmbVPPZKWT3BlbkFJy9I5kiKHuZ719fKXlD7t'
+
 # Copy the rest of the application code
 COPY . .
 
