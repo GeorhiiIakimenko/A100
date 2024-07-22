@@ -24,13 +24,15 @@ RUN pip install --upgrade pip \
 # Установите chromadb
 RUN pip install chromadb
 
-
-
 # Copy the rest of the application code
 COPY . .
+
+# Copy .env file
+COPY .env .env
 
 # Expose the port that FastAPI runs on
 EXPOSE 8222
 
 # Command to run the application
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8222"]
+
