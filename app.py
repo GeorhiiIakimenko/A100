@@ -34,7 +34,12 @@ GOOGLE_CLIENT_ID = os.getenv("add")
 GOOGLE_CLIENT_SECRET = os.getenv("add")
 SECRET_KEY = os.getenv("123456789")
 
-os.environ['OPENAI_API_KEY'] = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+if not OPENAI_API_KEY:
+    raise ValueError("Missing OPENAI_API_KEY environment variable")
+
+os.environ['OPENAI_API_KEY'] = OPENAI_API_KEY
 
 model_name = "gpt-4o"
 temperature = 0
