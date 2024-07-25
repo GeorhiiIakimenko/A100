@@ -53,8 +53,8 @@ session = boto3.session.Session()
 s3_client = session.client(
     service_name='s3',
     endpoint_url='https://storage.yandexcloud.net',
-    aws_access_key_id='YCAJEt7ilkMDiPuuZA--Sgb1H',
-    aws_secret_access_key='YCOJE46MLMRlPll_kl6oIllqvT7P7S65E4QohXLZ',
+    aws_access_key_id='my_aws_access',
+    aws_secret_access_key='my_aws_secret',
 )
 
 CHROMA_PATH = f'./chroma/{current_user}/'
@@ -75,31 +75,73 @@ oauth.register(
 
 def init_metadata_db():
     with sqlite3.connect('metadata.db') as conn:
-        conn.execute('''
+        cursor = conn.cursor()
+
+        # Create uploaded_docs table if not exists
+        cursor.execute('''
         CREATE TABLE IF NOT EXISTS uploaded_docs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        global_source TEXT,
-        filename TEXT
-        );
-        ''')
-        conn.execute('''
-        CREATE TABLE IF NOT EXISTS history_messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT,
-                user_type TEXT,
-                message TEXT,
-                tmstmp DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-        ''')
-        conn.execute('''
-        CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE,
-            hashed_password TEXT,
-            email TEXT UNIQUE,
-            google_id TEXT UNIQUE
+            global_source TEXT,
+            filename TEXT
         );
         ''')
+
+        # Create history_messages table if not exists
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS history_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT,
+            user_type TEXT,
+            message TEXT,
+            chat_id TEXT,
+            tmstmp DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        ''')
+
+        # Add chat_id column to the existing history_messages table if it doesn't exist
+        cursor.execute("PRAGMA table_info(history_messages);")
+        columns = [column[1] for column in cursor.fetchall()]
+        if 'chat_id' not in columns:
+            try:
+                cursor.execute('''
+                ALTER TABLE history_messages ADD COLUMN chat_id TEXT;
+                ''')
+                print("chat_id column added successfully")
+            except sqlite3.OperationalError:
+                print("chat_id column already exists or cannot be added")
+
+        # Check if users table exists and has the email and google_id columns
+        cursor.execute("PRAGMA table_info(users);")
+        columns = [column[1] for column in cursor.fetchall()]
+
+        if 'email' not in columns or 'google_id' not in columns:
+            # Rename old users table
+            cursor.execute("ALTER TABLE users RENAME TO users_old;")
+
+            # Create new users table with email and google_id columns
+            cursor.execute('''
+                CREATE TABLE users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT UNIQUE,
+                    hashed_password TEXT,
+                    email TEXT UNIQUE,
+                    google_id TEXT UNIQUE
+                );
+            ''')
+
+            # Copy data from old users table to new users table
+            cursor.execute('''
+                INSERT INTO users (id, username, hashed_password)
+                SELECT id, username, hashed_password FROM users_old;
+            ''')
+
+            # Drop old users table
+            cursor.execute("DROP TABLE users_old;")
+            print("email and google_id columns added successfully by recreating the table")
+        else:
+            print("email and google_id columns already exist")
+
+        conn.commit()
 
 init_metadata_db()
 
@@ -131,7 +173,7 @@ class SQLiteChatHistory():
     def __init__(self, db_path="metadata.db"):
         self.db_path = db_path
 
-    def add_message(self, message):
+    def add_message(self, message, chat_id):
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
         if isinstance(message, HumanMessage):
@@ -145,19 +187,19 @@ class SQLiteChatHistory():
             message = message.content
         else:
             raise ValueError("Invalid message type")
-        c.execute("INSERT INTO history_messages (user_id, user_type, message) VALUES (?, ?, ?)",
-                  (current_user, user_type, message))
+        c.execute("INSERT INTO history_messages (user_id, user_type, message, chat_id) VALUES (?, ?, ?, ?)",
+                  (current_user, user_type, message, chat_id))
         conn.commit()
         conn.close()
 
-    def messages(self, limit=15):
+    def messages(self, chat_id, limit=15):
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
-        c.execute(f"SELECT * FROM history_messages WHERE user_id = '{current_user}' ORDER BY id DESC LIMIT {limit}")
+        c.execute(f"SELECT * FROM history_messages WHERE user_id = '{current_user}' AND chat_id = '{chat_id}' ORDER BY id DESC LIMIT {limit}")
         resp = c.fetchall()[::-1]
         chat_history = []
         for row in resp:
-            id, user_id, user_type, message, tmstmp = row
+            id, user_id, user_type, message, chat_id, tmstmp = row
             if user_type == "human":
                 chat_history.append(HumanMessage(content=message))
             elif user_type == "ai":
@@ -169,24 +211,24 @@ class SQLiteChatHistory():
         messages = ChatMessageHistory(messages=chat_history)
         return messages
 
-    def delete_chat_history_last_n(self, n=10):
+    def delete_chat_history_last_n(self, chat_id, n=10):
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
         c.execute(f'''
-        with max_id as (select max(id) as maxid from history_messages where user_id = '{current_user}')
+        WITH max_id AS (SELECT MAX(id) AS maxid FROM history_messages WHERE user_id = '{current_user}' AND chat_id = '{chat_id}')
         DELETE FROM history_messages
-        WHERE id BETWEEN (select maxid from max_id) - {n} AND (select maxid from max_id)
+        WHERE id BETWEEN (SELECT maxid FROM max_id) - {n} AND (SELECT maxid FROM max_id)
         ''')
         conn.commit()
         conn.close()
 
 def add_filename_to_metadata(source, filename):
     with sqlite3.connect('metadata.db') as conn:
-        conn.execute(f'''INSERT INTO uploaded_docs (global_source, filename) values ('{source}', '{filename}') ; ''')
+        conn.execute(f'''INSERT INTO uploaded_docs (global_source, filename) VALUES ('{source}', '{filename}') ; ''')
 
 def delete_filename_from_metadata(source, filename):
     with sqlite3.connect('metadata.db') as conn:
-        conn.execute(f'''DELETE from uploaded_docs where global_source = '{source}' and filename ='{filename}' ; ''')
+        conn.execute(f'''DELETE FROM uploaded_docs WHERE global_source = '{source}' AND filename ='{filename}' ; ''')
 
 class Document:
     def __init__(self, source: str, page_content: str, metadata: Optional[Dict[str, Any]] = None):
@@ -428,7 +470,7 @@ chain_new = prompt_new | llm
 
 chain_with_message_history = RunnableWithMessageHistory(
     chain_new,
-    lambda session_id: chat_history_for_chain.messages(limit=15),
+    lambda session_id: chat_history_for_chain.messages(session_id),
     input_messages_key="question",
     history_messages_key="chat_history",
 )
@@ -444,7 +486,6 @@ def send_reset_password_email(email: str, new_password: str):
     # Здесь должна быть логика для отправки email с новым паролем
     print(f"Отправка нового пароля {new_password} на email {email}")
 
-
 # Подключение статических файлов
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -453,8 +494,8 @@ async def get_register():
     return FileResponse("static/register.html")
 
 @app.post("/register")
-async def post_register(username: str = Form(...), password: str = Form(...)):
-    add_user_to_db(username, password)
+async def post_register(username: str = Form(...), email: str = Form(...), password: str = Form(...)):
+    add_user_to_db(username, password, email)
     return RedirectResponse(url="/login", status_code=303)
 
 @app.get("/login", response_class=HTMLResponse)
@@ -480,7 +521,7 @@ async def auth(request: Request):
 
 @app.get('/login/google')
 async def login_google(request: Request):
-    redirect_uri = 'http://0.0.0.0/auth'
+    redirect_uri = 'http://localhost:8222/auth'
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
 @app.get("/", response_class=HTMLResponse)
@@ -494,8 +535,9 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             data = await websocket.receive_json()
             question_data = data.get('question_data')
-            if question_data is None:
-                await websocket.send_json({"error": "Question data is required"})
+            chat_id = data.get('chat_id')
+            if question_data is None or chat_id is None:
+                await websocket.send_json({"error": "Question data and chat_id are required"})
                 continue
 
             question = question_data.get('question')
@@ -506,25 +548,35 @@ async def websocket_endpoint(websocket: WebSocket):
             try:
                 answer = chain_with_message_history.invoke(
                     {"question": question, "context": format_docs(retriever.invoke(question))},
-                    {"configurable": {"session_id": 1}}
+                    {"configurable": {"session_id": chat_id}}
                 ).content
             except Exception as e:
                 await websocket.send_json({"error": str(e)})
                 continue
 
             if answer:
-                chat_history_for_chain.add_message(HumanMessage(content=question))
-                chat_history_for_chain.add_message(AIMessage(content=answer))
+                chat_history_for_chain.add_message(HumanMessage(content=question), chat_id)
+                chat_history_for_chain.add_message(AIMessage(content=answer), chat_id)
 
             await websocket.send_json({"answer": answer})
     except WebSocketDisconnect:
         print("Client disconnected")
 
+@app.post("/save_message")
+async def save_message(chat_id: str, user_type: str, message: str):
+    chat_history_for_chain.add_message(
+        HumanMessage(content=message) if user_type == 'human' else AIMessage(content=message),
+        chat_id
+    )
+    return {"status": "success"}
 
+@app.get("/chat_history/{chat_id}", response_class=JSONResponse)
+async def get_chat_history(chat_id: str):
+    history = chat_history_for_chain.messages(chat_id)
+    return JSONResponse(content=[{"user_type": msg.__class__.__name__.replace("Message", "").lower(), "message": msg.content} for msg in history.messages])
 @app.get("/forgot-password", response_class=HTMLResponse)
 async def get_forgot_password():
     return FileResponse("static/forgot_password.html")
-
 
 @app.post("/forgot-password")
 async def post_forgot_password(email: str = Form(...)):
@@ -536,7 +588,6 @@ async def post_forgot_password(email: str = Form(...)):
         conn.commit()
     send_reset_password_email(email, new_password)
     return HTMLResponse("Новый пароль был отправлен на ваш email")
-
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8222)
