@@ -9,7 +9,7 @@ from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.prompts.chat import ChatPromptTemplate, MessagesPlaceholder
 from langchain.schema import AIMessage, HumanMessage, SystemMessage
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
 from starlette.staticfiles import StaticFiles
 from passlib.context import CryptContext
 from starlette.middleware.sessions import SessionMiddleware
