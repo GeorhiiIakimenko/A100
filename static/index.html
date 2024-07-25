@@ -175,24 +175,6 @@
                 opacity: 1;
             }
         }
-        .logout-container {
-            padding: 10px;
-            border-top: 1px solid #ddd;
-            background-color: #fff;
-            text-align: center;
-        }
-        .logout-button {
-            padding: 10px 20px;
-            border: none;
-            background-color: #dc3545;
-            color: white;
-            border-radius: 4px;
-            cursor: pointer;
-            transition: background-color 0.3s;
-        }
-        .logout-button:hover {
-            background-color: #c82333;
-        }
     </style>
 </head>
 <body>
@@ -200,6 +182,7 @@
         <div>Utlik/ имя КС</div>
         <div>
             <button id="new-chat">Новый чат</button>
+            <button id="logout">Выход</button>
         </div>
     </header>
     <div class="container">
@@ -216,14 +199,12 @@
             <div class="chat-header">
                 <div id="chat-title">Выберите чат</div>
                 <button id="delete-chat">Удалить чат</button>
+                <button id="select-chat">Выбрать чат</button>
             </div>
             <div id="chat"></div>
             <div id="message-container">
                 <input type="text" id="message" placeholder="Введите сообщение">
                 <button id="send">Отправить</button>
-            </div>
-            <div class="logout-container">
-                <button class="logout-button" id="logout">Выход</button>
             </div>
         </div>
     </div>
@@ -236,6 +217,7 @@
         const chatList = document.getElementById('chat-list');
         const chatTitle = document.getElementById('chat-title');
         const deleteChatButton = document.getElementById('delete-chat');
+        const selectChatButton = document.getElementById('select-chat');
         const logoutButton = document.getElementById('logout');
         let currentChatId = null;
 
@@ -255,6 +237,7 @@
             } else if (data.answer) {
                 removeTypingIndicator();
                 addStructuredMessage('Бот', data.answer);
+                saveMessageToServer('Бот', data.answer, currentChatId);
             }
         };
 
@@ -288,20 +271,36 @@
             deleteCurrentChat();
         };
 
+        selectChatButton.onclick = function() {
+            if (currentChatId) {
+                loadChatHistory(currentChatId);
+            }
+        };
+
         logoutButton.onclick = function() {
             window.location.href = "/login";
         };
 
-        function sendMessage() {
-            const message = messageInput.value;
-            if (message) {
-                const data = { question_data: { question: message } };
-                socket.send(JSON.stringify(data));
-                addMessage('Вы', message, true);
-                messageInput.value = '';
-                addTypingIndicator();
-            }
-        }
+function sendMessage() {
+    const message = messageInput.value;
+    if (message) {
+        const data = { chat_id: currentChatId, user_type: 'human', message: message };
+        fetch('/save_message', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        }).then(response => response.json())
+          .then(result => {
+              if (result.status === "success") {
+                  addMessage('Вы', message, true);
+                  messageInput.value = '';
+                  addTypingIndicator();
+              } else {
+                  console.error("Error saving message:", result);
+              }
+          });
+    }
+}
 
         function addMessage(from, message, isSelf = false) {
             const messageElement = document.createElement('div');
@@ -456,9 +455,43 @@
         }
 
         function switchChat(chatId) {
-            currentChatId = chatId;
-            chatTitle.textContent = `Чат ${chatId}`;
-            chat.innerHTML = '';
+    currentChatId = chatId;
+    chatTitle.textContent = `Чат ${chatId}`;
+    loadChatHistory(chatId);  // Загружаем историю чата
+}
+
+
+        function loadChatHistory(chatId) {
+    fetch(`/chat_history/${chatId}`)
+        .then(response => response.json())
+        .then(messages => {
+            chat.innerHTML = '';  // Очистить текущее содержимое чата
+            messages.forEach(msg => {
+                addMessage(msg.user_type === 'human' ? 'Вы' : 'Бот', msg.message, msg.user_type === 'human');
+            });
+        });
+}
+
+        function saveMessageToServer(user_type, content, chat_id) {
+            fetch('/save_message', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ user_type, content, chat_id }),
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('Message saved successfully:', data);
+            })
+            .catch(error => {
+                console.error('Error saving message:', error);
+            });
         }
     </script>
 </body>
