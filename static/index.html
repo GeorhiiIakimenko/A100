@@ -281,26 +281,16 @@
             window.location.href = "/login";
         };
 
-function sendMessage() {
-    const message = messageInput.value;
-    if (message) {
-        const data = { chat_id: currentChatId, user_type: 'human', message: message };
-        fetch('/save_message', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-        }).then(response => response.json())
-          .then(result => {
-              if (result.status === "success") {
-                  addMessage('Вы', message, true);
-                  messageInput.value = '';
-                  addTypingIndicator();
-              } else {
-                  console.error("Error saving message:", result);
-              }
-          });
-    }
-}
+        function sendMessage() {
+            const message = messageInput.value;
+            if (message) {
+                const data = { question_data: { question: message }, chat_id: currentChatId };
+                socket.send(JSON.stringify(data));
+                addMessage('Вы', message, true);
+                messageInput.value = '';
+                addTypingIndicator();
+            }
+        }
 
         function addMessage(from, message, isSelf = false) {
             const messageElement = document.createElement('div');
@@ -455,19 +445,18 @@ function sendMessage() {
         }
 
         function switchChat(chatId) {
-    currentChatId = chatId;
-    chatTitle.textContent = `Чат ${chatId}`;
-    loadChatHistory(chatId);  // Загружаем историю чата
-}
-
+            currentChatId = chatId;
+            chatTitle.textContent = `Чат ${chatId}`;
+            chat.innerHTML = '';
+            loadChatHistory(chatId);
+        }
 
         function loadChatHistory(chatId) {
-    fetch(`/chat_history/${chatId}`)
-        .then(response => response.json())
-        .then(messages => {
-            chat.innerHTML = '';  // Очистить текущее содержимое чата
-            messages.forEach(msg => {
-                addMessage(msg.user_type === 'human' ? 'Вы' : 'Бот', msg.message, msg.user_type === 'human');
+            fetch(`/chat_history/${chatId}`)
+                .then(response => response.json())
+                .then(messages => {
+                    messages.forEach(msg => {
+                        addMessage(msg.user_type === 'human' ? 'Вы' : 'Бот', msg.message, msg.user_type === 'human');
             });
         });
 }
@@ -496,6 +485,3 @@ function sendMessage() {
     </script>
 </body>
 </html>
-
-</html>
-
