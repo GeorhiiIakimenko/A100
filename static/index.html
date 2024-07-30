@@ -210,255 +210,268 @@
     </div>
 
     <script>
-        const chat = document.getElementById('chat');
-        const messageInput = document.getElementById('message');
-        const sendButton = document.getElementById('send');
-        const newChatButton = document.getElementById('new-chat');
-        const chatList = document.getElementById('chat-list');
-        const chatTitle = document.getElementById('chat-title');
-        const deleteChatButton = document.getElementById('delete-chat');
-        const selectChatButton = document.getElementById('select-chat');
-        const logoutButton = document.getElementById('logout');
-        let currentChatId = null;
+const chat = document.getElementById('chat');
+const messageInput = document.getElementById('message');
+const sendButton = document.getElementById('send');
+const newChatButton = document.getElementById('new-chat');
+const chatList = document.getElementById('chat-list');
+const chatTitle = document.getElementById('chat-title');
+const deleteChatButton = document.getElementById('delete-chat');
+const selectChatButton = document.getElementById('select-chat');
+const logoutButton = document.getElementById('logout');
+let currentChatId = null;
 
-        // Создаем WebSocket соединение
-        const socket = new WebSocket(`wss://a100-7aef26fc003d.herokuapp.com/ws/rag_chat/`);
+// Create WebSocket connection
+const socket = new WebSocket(`wss://a100-7aef26fc003d.herokuapp.com/ws/rag_chat/`);
 
-        let typingIndicator;
+let typingIndicator;
 
-        socket.onopen = function(e) {
-            addMessage('Система', 'Вас приветсвует А100! Напишите Ваш вопрос о документообороте.');
-        };
+socket.onopen = function(e) {
+    console.log('WebSocket connection opened.');
+    loadChatList();
+};
 
-        socket.onmessage = function(event) {
-            const data = JSON.parse(event.data);
-            if (data.error) {
-                addMessage('Система', `Ошибка: ${data.error}`);
-            } else if (data.answer) {
-                removeTypingIndicator();
-                addStructuredMessage('Бот', data.answer);
-                saveMessageToServer('Бот', data.answer, currentChatId);
-            }
-        };
-
-        socket.onclose = function(event) {
-            if (event.wasClean) {
-                addMessage('Система', `Соединение закрыто чисто, код=${event.code} причина=${event.reason}`);
-            } else {
-                addMessage('Система', 'Соединение прервано');
-            }
-        };
-
-        socket.onerror = function(error) {
-            addMessage('Система', `Ошибка: ${error.message}`);
-        };
-
-        sendButton.onclick = function() {
-            sendMessage();
-        };
-
-        messageInput.addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                sendMessage();
-            }
+socket.onmessage = function(event) {
+    const data = JSON.parse(event.data);
+    console.log('Message from server:', data);
+    if (data.error) {
+        addMessage('Система', `Ошибка: ${data.error}`);
+    } else if (data.answer) {
+        removeTypingIndicator();
+        addStructuredMessage('Бот', data.answer);
+        saveMessageToServer('ai', data.answer, currentChatId);
+    } else if (data.chat_history) {
+        chat.innerHTML = '';
+        data.chat_history.forEach(msg => {
+            addMessage(msg.user_type === 'human' ? 'Вы' : msg.user_type === 'system' ? 'Система' : 'Бот', msg.message, msg.user_type === 'human');
         });
+    }
+};
 
-        newChatButton.onclick = function() {
-            createNewChat();
-        };
+socket.onclose = function(event) {
+    console.log('WebSocket connection closed.', event);
+    if (event.wasClean) {
+        addMessage('Система', `Соединение закрыто чисто, код=${event.code} причина=${event.reason}`);
+    } else {
+        addMessage('Система', 'Соединение прервано');
+    }
+};
 
-        deleteChatButton.onclick = function() {
-            deleteCurrentChat();
-        };
+socket.onerror = function(error) {
+    console.log('WebSocket error:', error);
+    addMessage('Система', `Ошибка: ${error.message}`);
+};
 
-        selectChatButton.onclick = function() {
-            if (currentChatId) {
-                loadChatHistory(currentChatId);
-            }
-        };
+sendButton.onclick = function() {
+    sendMessage();
+};
 
-        logoutButton.onclick = function() {
-            window.location.href = "/login";
-        };
+messageInput.addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') {
+        sendMessage();
+    }
+});
 
-        function sendMessage() {
-            const message = messageInput.value;
-            if (message) {
-                const data = { question_data: { question: message }, chat_id: currentChatId };
-                socket.send(JSON.stringify(data));
-                addMessage('Вы', message, true);
-                messageInput.value = '';
-                addTypingIndicator();
-            }
-        }
+newChatButton.onclick = createNewChat;
+deleteChatButton.onclick = () => deleteChat(currentChatId);
+selectChatButton.onclick = () => {
+    if (currentChatId) {
+        loadChatHistory(currentChatId);
+    }
+};
+logoutButton.onclick = () => {
+    window.location.href = "/login";
+};
 
-        function addMessage(from, message, isSelf = false) {
-            const messageElement = document.createElement('div');
-            messageElement.classList.add('message');
-            if (isSelf) messageElement.classList.add('self');
+function sendMessage() {
+    const message = messageInput.value;
+    if (message) {
+        const data = { action: "send_message", question_data: { question: message }, chat_id: currentChatId };
+        socket.send(JSON.stringify(data));
+        addMessage('Вы', message, true);
+        messageInput.value = '';
+        addTypingIndicator();
+    }
+}
 
-            const avatar = document.createElement('div');
-            avatar.classList.add('avatar');
-            avatar.textContent = from.charAt(0).toUpperCase();
+function addMessage(from, message, isSelf = false) {
+    const messageElement = document.createElement('div');
+    messageElement.classList.add('message');
+    if (isSelf) messageElement.classList.add('self');
 
-            const content = document.createElement('div');
-            content.classList.add('content');
+    const avatar = document.createElement('div');
+    avatar.classList.add('avatar');
+    avatar.textContent = from.charAt(0).toUpperCase();
 
-            const text = document.createElement('div');
-            text.classList.add('text');
-            text.innerHTML = formatMessage(`${from}: ${message}`);
+    const content = document.createElement('div');
+    content.classList.add('content');
 
-            const timestamp = document.createElement('div');
-            timestamp.classList.add('timestamp');
-            const now = new Date();
-            timestamp.textContent = now.toLocaleTimeString();
+    const text = document.createElement('div');
+    text.classList.add('text');
+    text.innerHTML = formatMessage(`${from}: ${message}`);
 
-            content.appendChild(text);
-            content.appendChild(timestamp);
+    const timestamp = document.createElement('div');
+    timestamp.classList.add('timestamp');
+    const now = new Date();
+    timestamp.textContent = now.toLocaleTimeString();
 
-            messageElement.appendChild(avatar);
-            messageElement.appendChild(content);
+    content.appendChild(text);
+    content.appendChild(timestamp);
 
-            chat.appendChild(messageElement);
-            chat.scrollTop = chat.scrollHeight;
-        }
+    messageElement.appendChild(avatar);
+    messageElement.appendChild(content);
 
-        function addStructuredMessage(from, message, isSelf = false) {
-            const messageElement = document.createElement('div');
-            messageElement.classList.add('message');
-            if (isSelf) messageElement.classList.add('self');
+    chat.appendChild(messageElement);
+    chat.scrollTop = chat.scrollHeight;
+}
 
-            const avatar = document.createElement('div');
-            avatar.classList.add('avatar');
-            avatar.textContent = from.charAt(0).toUpperCase();
+function addStructuredMessage(from, message, isSelf = false) {
+    const messageElement = document.createElement('div');
+    messageElement.classList.add('message');
+    if (isSelf) messageElement.classList.add('self');
 
-            const content = document.createElement('div');
-            content.classList.add('content');
+    const avatar = document.createElement('div');
+    avatar.classList.add('avatar');
+    avatar.textContent = from.charAt(0).toUpperCase();
 
-            const now = new Date();
-            const timestamp = document.createElement('div');
-            timestamp.classList.add('timestamp');
-            timestamp.textContent = now.toLocaleTimeString();
+    const content = document.createElement('div');
+    content.classList.add('content');
 
-            // Parse and format the message
-            const items = message.split('\n\n').map(item => {
-                const div = document.createElement('div');
-                div.classList.add('item');
-                div.innerHTML = formatMessage(item.replace(/\n/g, '<br>'));
-                return div;
+    const now = new Date();
+    const timestamp = document.createElement('div');
+    timestamp.classList.add('timestamp');
+    timestamp.textContent = now.toLocaleTimeString();
+
+    // Parse and format the message
+    const items = message.split('\n\n').map(item => {
+        const div = document.createElement('div');
+        div.classList.add('item');
+        div.innerHTML = formatMessage(item.replace(/\n/g, '<br>'));
+        return div;
+    });
+
+    items.forEach(item => content.appendChild(item));
+    content.appendChild(timestamp);
+
+    messageElement.appendChild(avatar);
+    messageElement.appendChild(content);
+
+    chat.appendChild(messageElement);
+    chat.scrollTop = chat.scrollHeight;
+}
+
+function addTypingIndicator() {
+    if (!typingIndicator) {
+        typingIndicator = document.createElement('div');
+        typingIndicator.classList.add('typing');
+        typingIndicator.innerHTML = 'Бот<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+        chat.appendChild(typingIndicator);
+        chat.scrollTop = chat.scrollHeight;
+    }
+}
+
+function removeTypingIndicator() {
+    if (typingIndicator) {
+        chat.removeChild(typingIndicator);
+        typingIndicator = null;
+    }
+}
+
+function formatMessage(message) {
+    const markdownImageRegex = /!\[.*?\]\((https:\/\/[^\s]+\.png)\)/g;
+    const plainUrlRegex = /(https:\/\/[^\s]+\.png)/g;
+
+    const uniqueUrls = new Set();
+    let formattedMessage = message;
+
+    formattedMessage = formattedMessage.replace(markdownImageRegex, (match, url) => {
+        uniqueUrls.add(url);
+        return `IMAGE_PLACEHOLDER_${url}`;
+    });
+
+    formattedMessage = formattedMessage.replace(plainUrlRegex, (url) => {
+        uniqueUrls.add(url);
+        return `IMAGE_PLACEHOLDER_${url}`;
+    });
+
+    let imagesHtml = '';
+    uniqueUrls.forEach(url => {
+        imagesHtml += `<a href="${url}" target="_blank"><img src="${url}" alt="Image" style="max-width: 100%; height: auto;"/></a>\n`;
+    });
+
+    formattedMessage = formattedMessage.replace(/IMAGE_PLACEHOLDER_(https:\/\/[^\s]+\.png)/g, (match, url) => {
+        return `<a href="${url}" target="_blank"><img src="${url}" alt="Image" style="max-width: 100%; height: auto;"/></a>`;
+    });
+
+    return formattedMessage;
+}
+
+function loadChatList() {
+    fetch('/get_chat_list')
+        .then(response => response.json())
+        .then(data => {
+            chatList.innerHTML = '';
+            data.chats.forEach(chat => {
+                addChatToList(chat.id, chat.title);
             });
+        })
+        .catch(error => console.error('Error loading chat list:', error));
+}
 
-            items.forEach(item => content.appendChild(item));
-            content.appendChild(timestamp);
+function createNewChat() {
+    fetch('/create_new_chat', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            addChatToList(data.chat_id, data.chat_name);
+            switchChat(data.chat_id);
+        })
+        .catch(error => console.error('Error creating new chat:', error));
+}
 
-            messageElement.appendChild(avatar);
-            messageElement.appendChild(content);
-
-            chat.appendChild(messageElement);
-            chat.scrollTop = chat.scrollHeight;
-        }
-
-        function addTypingIndicator() {
-            if (!typingIndicator) {
-                typingIndicator = document.createElement('div');
-                typingIndicator.classList.add('typing');
-                typingIndicator.innerHTML = 'Бот<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
-                chat.appendChild(typingIndicator);
-                chat.scrollTop = chat.scrollHeight;
-            }
-        }
-
-        function removeTypingIndicator() {
-            if (typingIndicator) {
-                chat.removeChild(typingIndicator);
-                typingIndicator = null;
-            }
-        }
-
-        function formatMessage(message) {
-            const markdownImageRegex = /!\[.*?\]\((https:\/\/[^\s]+\.png)\)/g;
-            const plainUrlRegex = /(https:\/\/[^\s]+\.png)/g;
-
-            const uniqueUrls = new Set();
-            let formattedMessage = message;
-
-            formattedMessage = formattedMessage.replace(markdownImageRegex, (match, url) => {
-                uniqueUrls.add(url);
-                return `IMAGE_PLACEHOLDER_${url}`;
-            });
-
-            formattedMessage = formattedMessage.replace(plainUrlRegex, (url) => {
-                uniqueUrls.add(url);
-                return `IMAGE_PLACEHOLDER_${url}`;
-            });
-
-            let imagesHtml = '';
-            uniqueUrls.forEach(url => {
-                imagesHtml += `<a href="${url}" target="_blank"><img src="${url}" alt="Image" style="max-width: 100%; height: auto;"/></a>\n`;
-            });
-
-            formattedMessage = formattedMessage.replace(/IMAGE_PLACEHOLDER_(https:\/\/[^\s]+\.png)/g, (match, url) => {
-                return `<a href="${url}" target="_blank"><img src="${url}" alt="Image" style="max-width: 100%; height: auto;"/></a>`;
-            });
-
-            return formattedMessage;
-        }
-
-        function createNewChat() {
-            const chatId = `chat-${Date.now()}`;
+        function addChatToList(chatId, title) {
             const chatElement = document.createElement('div');
             chatElement.classList.add('chat-item');
             chatElement.dataset.chatId = chatId;
             chatElement.innerHTML = `
-                <div class="chat-title">Новый чат</div>
+                <div class="chat-title">${title}</div>
                 <button class="delete-chat">Удалить</button>
                 <button class="select-chat">Выбрать</button>
             `;
             chatElement.querySelector('.delete-chat').onclick = () => deleteChat(chatId);
             chatElement.querySelector('.select-chat').onclick = () => switchChat(chatId);
             chatList.appendChild(chatElement);
-            switchChat(chatId);
-        }
-
-        function deleteCurrentChat() {
-            if (currentChatId) {
-                const chatElement = chatList.querySelector(`[data-chat-id="${currentChatId}"]`);
-                if (chatElement) {
-                    chatList.removeChild(chatElement);
-                }
-                currentChatId = null;
-                chatTitle.textContent = 'Выберите чат';
-                chat.innerHTML = '';
-            }
-        }
+}
 
         function deleteChat(chatId) {
-            const chatElement = chatList.querySelector(`[data-chat-id="${chatId}"]`);
-            if (chatElement) {
-                chatList.removeChild(chatElement);
-                if (chatId === currentChatId) {
-                    currentChatId = null;
-                    chatTitle.textContent = 'Выберите чат';
-                    chat.innerHTML = '';
-                }
-            }
-        }
+            fetch(`/delete_chat/${chatId}`, { method: 'DELETE' })
+                .then(response => {
+                    if (response.ok) {
+                        const chatElement = chatList.querySelector(`[data-chat-id="${chatId}"]`);
+                        if (chatElement) {
+                            chatList.removeChild(chatElement);
+                            if (chatId === currentChatId) {
+                                currentChatId = null;
+                                chatTitle.textContent = 'Выберите чат';
+                                chat.innerHTML = '';
+                            }
+                        }
+                    } else {
+                        throw new Error('Failed to delete chat');
+                    }
+                })
+                .catch(error => console.error('Error deleting chat:', error));
+}
 
         function switchChat(chatId) {
             currentChatId = chatId;
             chatTitle.textContent = `Чат ${chatId}`;
             chat.innerHTML = '';
             loadChatHistory(chatId);
-        }
+}
 
         function loadChatHistory(chatId) {
-            fetch(`/chat_history/${chatId}`)
-                .then(response => response.json())
-                .then(messages => {
-                    messages.forEach(msg => {
-                        addMessage(msg.user_type === 'human' ? 'Вы' : 'Бот', msg.message, msg.user_type === 'human');
-            });
-        });
+            const data = { action: "get_history", chat_id: chatId };
+            socket.send(JSON.stringify(data));
 }
 
         function saveMessageToServer(user_type, content, chat_id) {
@@ -467,7 +480,7 @@
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ user_type, content, chat_id }),
+                body: JSON.stringify({ user_type: user_type, message: content, chat_id: chat_id }),
             })
             .then(response => {
                 if (!response.ok) {
@@ -481,7 +494,10 @@
             .catch(error => {
                 console.error('Error saving message:', error);
             });
-        }
+}
+
+// Загрузка списка чатов при инициализации страницы
+        document.addEventListener('DOMContentLoaded', loadChatList);
     </script>
 </body>
 </html>

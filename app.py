@@ -4,6 +4,7 @@ from langchain_core.documents import Document
 from langchain_community.vectorstores import Chroma
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 import sqlite3
+import time
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.prompts.chat import ChatPromptTemplate, MessagesPlaceholder
@@ -17,7 +18,7 @@ import uvicorn
 import boto3
 from fnmatch import fnmatchcase
 import json
-import docx
+from pydantic import BaseModel
 import os
 from docx.oxml.ns import qn
 from docx import Document as DocxDocument
@@ -26,7 +27,6 @@ from authlib.integrations.starlette_client import OAuth
 from dotenv import load_dotenv
 import random
 import string
-
 
 load_dotenv()
 
@@ -69,7 +69,7 @@ oauth.register(
     access_token_url='https://accounts.google.com/o/oauth2/token',
     access_token_params=None,
     refresh_token_url=None,
-    redirect_uri='http://localhost:8222/auth',
+    redirect_uri='http://localhost:8222/login',
     client_kwargs={'scope': 'openid profile email'},
 )
 
@@ -98,7 +98,15 @@ def init_metadata_db():
         );
         ''')
 
-        # Add chat_id column to the existing history_messages table if it doesn't exist
+        # Create chats table if not exists
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS chats (
+            chat_id TEXT PRIMARY KEY,
+            chat_name TEXT
+        );
+        ''')
+
+        # Check and add columns to history_messages table if needed
         cursor.execute("PRAGMA table_info(history_messages);")
         columns = [column[1] for column in cursor.fetchall()]
         if 'chat_id' not in columns:
@@ -133,6 +141,13 @@ def init_metadata_db():
             cursor.execute('''
                 INSERT INTO users (id, username, hashed_password)
                 SELECT id, username, hashed_password FROM users_old;
+            ''')
+
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS chat_names (
+                chat_id TEXT PRIMARY KEY,
+                chat_name TEXT
+            );
             ''')
 
             # Drop old users table
@@ -173,7 +188,7 @@ class SQLiteChatHistory():
     def __init__(self, db_path="metadata.db"):
         self.db_path = db_path
 
-    def add_message(self, message, chat_id):
+    def add_message(self, message, chat_id, chat_name=None):
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
         if isinstance(message, HumanMessage):
@@ -189,6 +204,9 @@ class SQLiteChatHistory():
             raise ValueError("Invalid message type")
         c.execute("INSERT INTO history_messages (user_id, user_type, message, chat_id) VALUES (?, ?, ?, ?)",
                   (current_user, user_type, message, chat_id))
+        if chat_name:
+            c.execute("INSERT OR IGNORE INTO chat_names (chat_id, chat_name) VALUES (?, ?)", (chat_id, chat_name))
+            c.execute("UPDATE chat_names SET chat_name = ? WHERE chat_id = ?", (chat_name, chat_id))
         conn.commit()
         conn.close()
 
@@ -221,6 +239,8 @@ class SQLiteChatHistory():
         ''')
         conn.commit()
         conn.close()
+
+
 
 def add_filename_to_metadata(source, filename):
     with sqlite3.connect('metadata.db') as conn:
@@ -534,39 +554,76 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             data = await websocket.receive_json()
-            question_data = data.get('question_data')
-            chat_id = data.get('chat_id')
-            if question_data is None or chat_id is None:
-                await websocket.send_json({"error": "Question data and chat_id are required"})
+            action = data.get('action')
+
+            if action == "get_history":
+                chat_id = data.get('chat_id')
+                if chat_id is None:
+                    await websocket.send_json({"error": "chat_id is required"})
+                    continue
+
+                # Get chat history for the given chat_id
+                chat_history = chat_history_for_chain.messages(chat_id)
+                formatted_history = [{"user_type": "human" if isinstance(msg, HumanMessage) else "ai" if isinstance(msg, AIMessage) else "system", "message": msg.content} for msg in chat_history.messages]
+                await websocket.send_json({"chat_history": formatted_history})
                 continue
 
-            question = question_data.get('question')
-            if question is None:
-                await websocket.send_json({"error": "Question is required"})
-                continue
+            elif action == "send_message":
+                question_data = data.get('question_data')
+                chat_id = data.get('chat_id')
 
-            try:
-                answer = chain_with_message_history.invoke(
-                    {"question": question, "context": format_docs(retriever.invoke(question))},
-                    {"configurable": {"session_id": chat_id}}
-                ).content
-            except Exception as e:
-                await websocket.send_json({"error": str(e)})
-                continue
+                if question_data is None or chat_id is None:
+                    await websocket.send_json({"error": "Question data and chat_id are required"})
+                    continue
 
-            if answer:
-                chat_history_for_chain.add_message(HumanMessage(content=question), chat_id)
-                chat_history_for_chain.add_message(AIMessage(content=answer), chat_id)
+                question = question_data.get('question')
+                if question is None:
+                    await websocket.send_json({"error": "Question is required"})
+                    continue
 
-            await websocket.send_json({"answer": answer})
+                try:
+                    answer = chain_with_message_history.invoke(
+                        {"question": question, "context": format_docs(retriever.invoke(question))},
+                        {"configurable": {"session_id": chat_id}}
+                    ).content
+                except Exception as e:
+                    await websocket.send_json({"error": str(e)})
+                    continue
+
+                if answer:
+                    chat_history_for_chain.add_message(HumanMessage(content=question), chat_id)
+                    chat_history_for_chain.add_message(AIMessage(content=answer), chat_id)
+
+                await websocket.send_json({"answer": answer})
     except WebSocketDisconnect:
         print("Client disconnected")
 
+class ChatMetadata(BaseModel):
+    chat_id: str
+    chat_name: str
+
+class SaveMessageRequest(BaseModel):
+    chat_id: str
+    chat_name: Optional[str]
+    user_type: str
+    message: str
+
+
+@app.post("/save_chat")
+async def save_chat(metadata: ChatMetadata):
+    try:
+        with sqlite3.connect('metadata.db') as conn:
+            conn.execute("INSERT OR REPLACE INTO chats (chat_id, chat_name) VALUES (?, ?)",
+                         (metadata.chat_id, metadata.chat_name))
+            conn.commit()
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=400, detail="Chat metadata could not be saved")
+    return {"status": "success"}
 @app.post("/save_message")
-async def save_message(chat_id: str, user_type: str, message: str):
+async def save_message(request: SaveMessageRequest):
     chat_history_for_chain.add_message(
-        HumanMessage(content=message) if user_type == 'human' else AIMessage(content=message),
-        chat_id
+        HumanMessage(content=request.message) if request.user_type == 'human' else AIMessage(content=request.message),
+        request.chat_id
     )
     return {"status": "success"}
 
@@ -578,6 +635,28 @@ async def get_chat_history(chat_id: str):
 async def get_forgot_password():
     return FileResponse("static/forgot_password.html")
 
+@app.get("/get_chat_list")
+async def get_chat_list():
+    with sqlite3.connect('metadata.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT chat_id, chat_name FROM chats")
+        chats = [{"id": row[0], "title": row[1]} for row in cursor.fetchall()]
+    return JSONResponse(content={"chats": chats})
+
+@app.post("/create_new_chat")
+async def create_new_chat():
+    chat_id = f'chat-{int(time.time() * 1000)}'
+    chat_name = "Новый чат"
+    with sqlite3.connect('metadata.db') as conn:
+        conn.execute("INSERT INTO chats (chat_id, chat_name) VALUES (?, ?)", (chat_id, chat_name))
+        conn.commit()
+
+    # Добавляем приветственное сообщение
+    welcome_message = "Вас приветствует А100! Напишите Ваш вопрос о документообороте."
+    chat_history_for_chain.add_message(SystemMessage(content=welcome_message), chat_id)
+
+    return JSONResponse(content={"chat_id": chat_id, "chat_name": chat_name})
+
 @app.post("/forgot-password")
 async def post_forgot_password(email: str = Form(...)):
     new_password = generate_random_password()
@@ -588,6 +667,14 @@ async def post_forgot_password(email: str = Form(...)):
         conn.commit()
     send_reset_password_email(email, new_password)
     return HTMLResponse("Новый пароль был отправлен на ваш email")
+
+@app.delete("/delete_chat/{chat_id}")
+async def delete_chat(chat_id: str):
+    with sqlite3.connect('metadata.db') as conn:
+        conn.execute("DELETE FROM chats WHERE chat_id = ?", (chat_id,))
+        conn.execute("DELETE FROM history_messages WHERE chat_id = ?", (chat_id,))
+        conn.commit()
+    return JSONResponse(content={"status": "success"})
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8222)
