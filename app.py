@@ -15,9 +15,6 @@ from starlette.staticfiles import StaticFiles
 from passlib.context import CryptContext
 from starlette.middleware.sessions import SessionMiddleware
 import uvicorn
-import boto3
-from fnmatch import fnmatchcase
-import json
 from pydantic import BaseModel
 import os
 from docx.oxml.ns import qn
@@ -51,16 +48,6 @@ llm = ChatOpenAI(model=model_name, temperature=temperature)
 embeddings = OpenAIEmbeddings()
 
 current_user = 'A100'
-
-# Настройка клиента для Yandex S3
-session = boto3.session.Session()
-s3_client = session.client(
-    service_name='s3',
-    endpoint_url='https://storage.yandexcloud.net',
-    aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-    aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
-)
-
 CHROMA_PATH = f'./chroma/{current_user}/'
 
 oauth = OAuth()
@@ -266,47 +253,25 @@ def get_uploaded_filenames(source) -> List[str]:
     filenames = [row[0] for row in rows]
     return filenames
 
-def load_s3_files(bucket: str, prefix: str, suffix: str) -> List[str]:
-    """List files in a given S3 bucket with a specified prefix and suffix."""
-    try:
-        response = s3_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
-        files = [content['Key'] for content in response.get('Contents', []) if content['Key'].endswith(suffix)]
-        if not files:
-            print(f"No files found in bucket {bucket} with prefix {prefix} and suffix {suffix}")
-        else:
-            print(f"Files found in bucket {bucket} with prefix {prefix} and suffix {suffix}: {files}")
-        return files
-    except Exception as e:
-        print(f"Error listing files in bucket {bucket} with prefix {prefix} and suffix {suffix}: {e}")
-        return []
-
-def load_docx_new(source, bucket: str) -> List[Document]:
-    prefix = 'A100/docx/'
-    suffix = '.docx'
-    files = load_s3_files(bucket, prefix, suffix)
-    uniq_files = get_uploaded_filenames(source) or []
-
+def load_local_docx_files(local_dir: str) -> List[Document]:
+    """Загрузка документов .docx из локальной директории"""
     docs = []
-    for file in files:
-        if not any(fnmatchcase(file, f"*{pattern}*") for pattern in uniq_files):
+    for filename in os.listdir(local_dir):
+        if filename.endswith(".docx"):
+            file_path = os.path.join(local_dir, filename)
             try:
-                obj = s3_client.get_object(Bucket=bucket, Key=file)
-                content = obj['Body'].read()
+                with open(file_path, 'rb') as f:
+                    content = f.read()
 
-                # Используем BytesIO для чтения содержимого файла как бинарного потока
                 doc_stream = BytesIO(content)
                 doc = DocxDocument(doc_stream)
 
-                # Извлекаем текст из документа docx
                 full_text = []
                 image_counter = 1
-
-                # Получаем имя файла без расширения и создаем соответствующую папку
-                filename_without_extension = os.path.splitext(os.path.basename(file))[0]
-                image_folder = filename_without_extension  # Используем оригинальное имя файла для папки
+                filename_without_extension = os.path.splitext(filename)[0]
+                image_folder = filename_without_extension
 
                 for para in doc.paragraphs:
-                    # Обработка параграфов для создания ссылок на изображения
                     para_text = para.text
                     for run in para.runs:
                         for drawing in run.element.findall('.//a:blip', namespaces={
@@ -315,102 +280,31 @@ def load_docx_new(source, bucket: str) -> List[Document]:
                             image_part = doc.part.related_parts[image_rId]
                             image_filename = f'image_{image_counter:02d}.{image_part.content_type.split("/")[-1]}'
                             image_counter += 1
-
-                            # Загрузка изображения в бакет Яндекса
-                            img_content = image_part.blob
-                            s3_image_key = f"A100/images/{image_folder}/{image_filename}"
-                            s3_client.put_object(
-                                Bucket=bucket,
-                                Key=s3_image_key,
-                                Body=img_content,
-                                ContentDisposition='inline',
-                                ContentType=image_part.content_type
-                            )
-
-                            # Генерация URL для изображения
-                            s3_image_url = f"https://storage.yandexcloud.net/{bucket}/{s3_image_key}"
+                            s3_image_url = f"{image_folder}/{image_filename}"
                             para_text += f'\n{s3_image_url}'
                     full_text.append(para_text)
                 content = '\n'.join(full_text)
-
-                docs.append(Document(source=file, page_content=content))
+                docs.append(Document(source=filename, page_content=content))
             except Exception as e:
-                print(f"Error reading docx file {file}: {e}")
+                print(f"Error reading docx file {file_path}: {e}")
+    return docs
 
-    return docs if docs else None
-
-def load_txts(source, bucket: str) -> List[Document]:
-    prefix = f'{current_user}/txt/'
-    suffix = '.txt'
-    files = load_s3_files(bucket, prefix, suffix)
-    uniq_files = get_uploaded_filenames(source) or []
-
-    docs = []
-    for file in files:
-        if not any(fnmatchcase(file, f"*{pattern}*") for pattern in uniq_files):
-            try:
-                obj = s3_client.get_object(Bucket=bucket, Key=file)
-                content = obj['Body'].read().decode('utf-8')
-                docs.append(Document(source=file, page_content=content))
-            except Exception as e:
-                print(f"Error reading txt file {file}: {e}")
-
-    return docs if docs else None
-
-def load_jsons(source, bucket: str) -> Tuple[List[Document], List[dict]]:
-    prefix = f'{current_user}/json/'
-    suffix = '.json'
-    files = load_s3_files(bucket, prefix, suffix)
-    uniq_files = get_uploaded_filenames(source) or []
-
-    json_docs, json_metadata = [], []
-    for file in files:
-        if not any(fnmatchcase(file, f"*{pattern}*") for pattern in uniq_files):
-            try:
-                obj = s3_client.get_object(Bucket=bucket, Key=file)
-                content = json.loads(obj['Body'].read().decode('utf-8'))
-                json_docs.append(content)
-                json_metadata.append({'source': file})
-            except Exception as e:
-                print(f"Error reading json file {file}: {e}")
-
-    return (json_docs, json_metadata) if json_docs else (None, None)
-
-def load_documents(global_source, bucket: str, file_types: List[str]) -> dict:
+def load_documents(local_dir: str, file_types: List[str]) -> dict:
     """
-    Загружаем документы в зависимости от типа документа из Yandex S3
+    Загружаем документы в зависимости от типа документа из локальной директории
     """
-    all_docs = {'txt': None, 'json': None, 'json_metadata': None, 'docx': None}
-    if 'txt' in file_types:
-        txt_docs = load_txts(global_source, bucket)
-        all_docs['txt'] = txt_docs
-    if 'json' in file_types:
-        json_docs, json_metadata = load_jsons(global_source, bucket)
-        all_docs['json'] = json_docs
-        all_docs['json_metadata'] = json_metadata
+    all_docs = {'docx': None}
     if 'docx' in file_types:
-        docx_docs = load_docx_new(global_source, bucket)
+        docx_docs = load_local_docx_files(local_dir)
         all_docs['docx'] = docx_docs
     return all_docs
 
 # Пример использования
-DATA_BUCKET = 'utlik'
-DOCS = load_documents('s3', DATA_BUCKET, ['txt', 'json', 'docx'])
+LOCAL_DIR = './downloaded_documents/'
+DOCS = load_documents(LOCAL_DIR, ['docx'])
 
 def split_docs_to_chunks(documents: dict, file_types: List[str], chunk_size=2000, chunk_overlap=500):
     all_chunks = []
-    if 'txt' in file_types and documents['txt'] is not None:
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-        txt_chunks = [text_splitter.split_documents([doc]) for doc in documents['txt']]
-        txt_chunks = [item for sublist in txt_chunks for item in sublist]
-        all_chunks.extend(txt_chunks)
-
-    if 'json' in file_types and documents['json'] is not None:
-        json_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-        json_chunks = json_splitter.create_documents([json.dumps(doc, ensure_ascii=False) for doc in documents['json']],
-                                                     metadatas=documents['json_metadata'])
-        all_chunks.extend(json_chunks)
-
     if 'docx' in file_types and documents['docx'] is not None:
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         txt_chunks = [text_splitter.split_documents([doc]) for doc in documents['docx']]
@@ -419,7 +313,7 @@ def split_docs_to_chunks(documents: dict, file_types: List[str], chunk_size=2000
 
     return all_chunks
 
-chunks_res = split_docs_to_chunks(DOCS, ['txt', 'json', 'docx'])
+chunks_res = split_docs_to_chunks(DOCS, ['docx'])
 
 def get_chroma_vectorstore(documents, embeddings, persist_directory):
     if os.path.isdir(persist_directory) and os.listdir(persist_directory):
@@ -458,6 +352,8 @@ def get_chroma_vectorstore(documents, embeddings, persist_directory):
 
 vectorstore = get_chroma_vectorstore(documents=chunks_res, embeddings=embeddings, persist_directory=CHROMA_PATH)
 retriever = vectorstore.as_retriever(search_kwargs={"k": 2}, search_type='similarity')
+
+
 
 def format_docs(docs):
     return "\n\n".join(doc.page_content for doc in docs)
@@ -534,7 +430,7 @@ b. Просматривайте содержимое файлов полност
 c. Обратите особое внимание на файлы, связанные с темой вопроса (например, файлы об ЭЦП при вопросах об электронной подписи).
 Если ответ найден в контексте или файлах, предоставьте подробный и точный ответ, обязательно указывая источник информации (название файла).
 Используйте информацию из всех релевантных файлов, комбинируя ее при необходимости для полного ответа.
-Если в контексте есть ссылки на изображения, обязательно отобразите их в вашем ответе.
+!Если в контексте есть ссылки на изображения, обязательно отобразите их в вашем ответе.!
 Используйте информацию из истории чата только для лучшего понимания контекста вопроса, но не как основной источник ответа.
 Не ищите информацию в интернете. Используйте только предоставленные источники.
 Если ответ не найден в контексте или файлах после тщательного поиска, ответьте: "Из представленного контекста и доступных документов ответа нет".
