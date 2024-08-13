@@ -9,7 +9,7 @@ from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.prompts.chat import ChatPromptTemplate, MessagesPlaceholder
 from langchain.schema import AIMessage, HumanMessage, SystemMessage
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Form, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Form, Request, Body
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
 from starlette.staticfiles import StaticFiles
 from passlib.context import CryptContext
@@ -27,6 +27,10 @@ from authlib.integrations.starlette_client import OAuth
 from dotenv import load_dotenv
 import random
 import string
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -210,11 +214,11 @@ class SQLiteChatHistory():
         conn.commit()
         conn.close()
 
-    def messages(self, chat_id, limit=15):
+    def messages(self, chat_id):
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
-        c.execute(f"SELECT * FROM history_messages WHERE user_id = '{current_user}' AND chat_id = '{chat_id}' ORDER BY id DESC LIMIT {limit}")
-        resp = c.fetchall()[::-1]
+        c.execute(f"SELECT * FROM history_messages WHERE chat_id = ? ORDER BY id", (chat_id,))
+        resp = c.fetchall()
         chat_history = []
         for row in resp:
             id, user_id, user_type, message, chat_id, tmstmp = row
@@ -224,10 +228,8 @@ class SQLiteChatHistory():
                 chat_history.append(AIMessage(content=message))
             elif user_type == "system":
                 chat_history.append(SystemMessage(content=message))
-        conn.commit()
         conn.close()
-        messages = ChatMessageHistory(messages=chat_history)
-        return messages
+        return ChatMessageHistory(messages=chat_history)
 
     def delete_chat_history_last_n(self, chat_id, n=10):
         conn = sqlite3.connect(self.db_path)
@@ -467,17 +469,80 @@ prompt_new = ChatPromptTemplate.from_messages(
         (
             "system",
             '''
+            Контекст:
             Context: 
-                {context}
-            You are an assistant for question-answering tasks. Your aim is to help to new employees with job-specific questions.
-            You should help them with propper actions, recomendations abouts software using the following pieces of retrieved context.
-            You can also use information from chat_history to better understand the problem if necessary.
-            Use only {context} for consultation. Do not search for information on the Internet
-            First understand the meaning of the user's question, and then look for information in {context}.
-            If you don't find the answer in the {context}, just say 'I don't know', e.g.:
-            Answer the question based only on the context above. If the answer is not in the context, say "Из представленного контекста ответа нет".
-            If you meet links to the images in your context always display them in your response.
-            The context which you should use: {context}
+                Вы - ассистент для ответов на вопросы, специализирующийся на помощи новым сотрудникам с вопросами, связанными с их работой. Ваша задача - предоставлять точную информацию, рекомендации по правильным действиям и использованию программного обеспечения, основываясь на следующих источниках:
+
+Предоставленный контекст {context}
+История чата (chat_history), если это необходимо для лучшего понимания проблемы
+Содержимое следующих файлов, находящихся в бакете utlik с префиксом A100/docx/ и суффиксом .docx:
+
+01. Приложение 1 Требования к оформлению документов (1).docx
+
+
+Приложение 2 Шаблоны имени (нейминга) карточек и файлов документов в СЭД.docx
+
+
+
+
+Приложение 3 Запуск и прерывание процессов обработки документов_ред..docx
+
+
+
+
+Приложение 4 Перенос срока выполнения задачи в СЭД (1).docx
+
+
+
+
+Приложение 5 Примерный перечень документов, не подлежащих регистрации.docx
+
+
+
+
+Приложение 10 Входящий договор с ЭЦП, поступивший через Quidiox (1).docx
+
+
+
+
+Приложение 13 Создание контрагента (1).docx
+
+
+
+
+Приложение 14 Направление задачи на изменение кадровой инф-ции в СЭД (1).docx
+
+
+
+
+Приложение 15 Инструкция о получении, продлении ЭЦП.docx
+
+
+Положение о документообороте v3.0.docx
+Приложение-16-Перечень-владельцев-ЭЦП (2).docx
+Приложения а100 * 18*47_48_16_17.docx
+
+
+
+Инструкции:
+
+Внимательно прочитайте вопрос пользователя и поймите его суть.
+Проанализируйте предоставленный контекст {context} и содержимое всех указанных файлов для поиска релевантной информации.
+При работе с файлами:
+a. Убедитесь, что у вас есть доступ к содержимому каждого файла.
+b. Просматривайте содержимое файлов полностью, не пропуская никакой информации.
+c. Обратите особое внимание на файлы, связанные с темой вопроса (например, файлы об ЭЦП при вопросах об электронной подписи).
+Если ответ найден в контексте или файлах, предоставьте подробный и точный ответ, обязательно указывая источник информации (название файла).
+Используйте информацию из всех релевантных файлов, комбинируя ее при необходимости для полного ответа.
+Если в контексте есть ссылки на изображения, обязательно отобразите их в вашем ответе.
+Используйте информацию из истории чата только для лучшего понимания контекста вопроса, но не как основной источник ответа.
+Не ищите информацию в интернете. Используйте только предоставленные источники.
+Если ответ не найден в контексте или файлах после тщательного поиска, ответьте: "Из представленного контекста и доступных документов ответа нет".
+Если вопрос касается конкретной процедуры или использования программного обеспечения, предоставьте пошаговые инструкции, основываясь на информации из файлов.
+Если информация в разных документах противоречит друг другу, укажите на это и предоставьте информацию из самого актуального документа (если возможно определить).
+Если вопрос требует дополнительного уточнения, задайте уточняющие вопросы пользователю.
+При ответе на вопросы об ЭЦП обязательно обращайтесь к файлам "15. Приложение 15 Инструкция о получении, продлении ЭЦП.docx" и "Приложение-16-Перечень-владельцев-ЭЦП (2).docx".
+            Вопрос:
             Question: {question}
             ''',
         ),
@@ -539,6 +604,26 @@ async def auth(request: Request):
     else:
         return HTMLResponse("Authorization failed", status_code=400)
 
+
+@app.put("/rename_chat/{chat_id}")
+async def rename_chat(chat_id: str, new_title: dict = Body(...)):
+    logger.info(f"Attempting to rename chat {chat_id} to {new_title}")
+    new_title_str = new_title.get("new_title")
+    if not new_title_str:
+        logger.error("New title is missing in the request body")
+        raise HTTPException(status_code=400, detail="New title is required")
+
+    with sqlite3.connect('metadata.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE chats SET chat_name = ? WHERE chat_id = ?", (new_title_str, chat_id))
+        if cursor.rowcount == 0:
+            logger.error(f"Chat with id {chat_id} not found in the database")
+            raise HTTPException(status_code=404, detail="Chat not found")
+        conn.commit()
+
+    logger.info(f"Successfully renamed chat {chat_id} to {new_title_str}")
+    return JSONResponse(content={"status": "success", "new_title": new_title_str})
+
 @app.get('/login/google')
 async def login_google(request: Request):
     redirect_uri = 'http://localhost:8222/auth'
@@ -548,55 +633,70 @@ async def login_google(request: Request):
 async def read_root():
     return FileResponse("static/index.html")
 
+
 @app.websocket("/ws/rag_chat/")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
+    logger.info("WebSocket connection accepted")
     try:
         while True:
             data = await websocket.receive_json()
+            logger.info(f"Received data: {data}")
             action = data.get('action')
 
             if action == "get_history":
                 chat_id = data.get('chat_id')
                 if chat_id is None:
+                    logger.warning("chat_id is required but not provided")
                     await websocket.send_json({"error": "chat_id is required"})
                     continue
 
-                # Get chat history for the given chat_id
                 chat_history = chat_history_for_chain.messages(chat_id)
-                formatted_history = [{"user_type": "human" if isinstance(msg, HumanMessage) else "ai" if isinstance(msg, AIMessage) else "system", "message": msg.content} for msg in chat_history.messages]
+                formatted_history = [{"user_type": "human" if isinstance(msg, HumanMessage) else "ai" if isinstance(msg,
+                                                                                                                    AIMessage) else "system",
+                                      "message": msg.content} for msg in chat_history.messages]
+                logger.info(f"Sending chat history: {formatted_history}")
                 await websocket.send_json({"chat_history": formatted_history})
-                continue
 
             elif action == "send_message":
                 question_data = data.get('question_data')
                 chat_id = data.get('chat_id')
 
                 if question_data is None or chat_id is None:
+                    logger.warning("Question data and chat_id are required but not provided")
                     await websocket.send_json({"error": "Question data and chat_id are required"})
                     continue
 
                 question = question_data.get('question')
                 if question is None:
+                    logger.warning("Question is required but not provided")
                     await websocket.send_json({"error": "Question is required"})
                     continue
+
+                logger.info(f"Processing question: {question} for chat_id: {chat_id}")
 
                 try:
                     answer = chain_with_message_history.invoke(
                         {"question": question, "context": format_docs(retriever.invoke(question))},
                         {"configurable": {"session_id": chat_id}}
                     ).content
-                except Exception as e:
-                    await websocket.send_json({"error": str(e)})
-                    continue
+                    logger.info(f"Generated answer: {answer}")
 
-                if answer:
                     chat_history_for_chain.add_message(HumanMessage(content=question), chat_id)
                     chat_history_for_chain.add_message(AIMessage(content=answer), chat_id)
 
-                await websocket.send_json({"answer": answer})
+                    logger.info(f"Sending answer: {answer}")
+                    await websocket.send_json({"answer": answer})
+                except Exception as e:
+                    logger.error(f"Error generating answer: {str(e)}", exc_info=True)
+                    await websocket.send_json({"error": str(e)})
+            else:
+                logger.warning(f"Unknown action: {action}")
+                await websocket.send_json({"error": "Unknown action"})
     except WebSocketDisconnect:
-        print("Client disconnected")
+        logger.info("Client disconnected")
+    except Exception as e:
+        logger.error(f"Unexpected error in WebSocket handler: {str(e)}", exc_info=True)
 
 class ChatMetadata(BaseModel):
     chat_id: str
