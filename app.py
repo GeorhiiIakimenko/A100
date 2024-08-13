@@ -777,4 +777,5 @@ async def delete_chat(chat_id: str):
     return JSONResponse(content={"status": "success"})
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8222)
+    port = int(os.environ.get("PORT", 8222))
+    uvicorn.run(app, host="0.0.0.0", port=port)
