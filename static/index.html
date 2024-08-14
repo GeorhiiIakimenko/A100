@@ -378,7 +378,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 addMessage('Система', `Ошибка: ${data.error}`);
             } else if (data.answer) {
                 removeTypingIndicator();
-                addStructuredMessage('Бот', data.answer);
+                addStructuredMessage('Киберсотрудник', data.answer);
                 saveMessageToServer('ai', data.answer, currentChatId);
             } else if (data.chat_history) {
                 chat.innerHTML = '';
