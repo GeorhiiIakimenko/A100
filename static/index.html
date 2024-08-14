@@ -618,23 +618,27 @@ function formatInlineStyles(text) {
     }
 
     function renameChat(chatId) {
-        const chatElement = document.querySelector(`.chat-item[data-chat-id="${chatId}"]`);
-        const selectButton = chatElement.querySelector('.select-chat');
-        const newTitle = prompt('Введите новое название для чата:', selectButton.textContent);
-        if (newTitle !== null && newTitle.trim() !== '') {
+    const chatElement = document.querySelector(`.chat-item[data-chat-id="${chatId}"]`);
+    const selectButton = chatElement.querySelector('.select-chat');
+    const currentTitle = selectButton.textContent;
+    const newTitle = prompt('Введите новое название для чата (максимум 20 символов):', currentTitle);
+
+    if (newTitle !== null) {
+        const trimmedTitle = newTitle.trim();
+        if (trimmedTitle !== '' && trimmedTitle.length <= 20) {
             fetch(`/rename_chat/${chatId}`, {
                 method: 'PUT',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ new_title: newTitle.trim() }),
+                body: JSON.stringify({ new_title: trimmedTitle }),
             })
             .then(response => {
                 if (response.ok) {
-                    selectButton.textContent = newTitle.trim();
+                    selectButton.textContent = trimmedTitle;
                     if (currentChatId === chatId) {
-                        currentChatInfo.title = newTitle.trim();
-                        chatTitle.textContent = newTitle.trim();
+                        currentChatInfo.title = trimmedTitle;
+                        chatTitle.textContent = trimmedTitle;
                     }
                 } else {
                     throw new Error('Failed to rename chat');
@@ -644,10 +648,16 @@ function formatInlineStyles(text) {
                 console.error('Error renaming chat:', error);
                 addMessage('Система', 'Ошибка при переименовании чата');
             });
+        } else if (trimmedTitle.length > 20) {
+            alert('Название чата не может быть длиннее 20 символов.');
+        } else {
+            alert('Название чата не может быть пустым.');
         }
     }
+}
 
     function deleteChat(chatId) {
+    if (confirm('Вы уверены, что хотите удалить этот чат? Это действие нельзя отменить.')) {
         fetch(`/delete_chat/${chatId}`, { method: 'DELETE' })
             .then(response => {
                 if (response.ok) {
@@ -664,8 +674,12 @@ function formatInlineStyles(text) {
                     throw new Error('Failed to delete chat');
                 }
             })
-            .catch(error => console.error('Error deleting chat:', error));
+            .catch(error => {
+                console.error('Error deleting chat:', error);
+                addMessage('Система', 'Ошибка при удалении чата');
+            });
     }
+}
 
     function switchChat(chatId) {
         const chatElement = document.querySelector(`.chat-item[data-chat-id="${chatId}"]`);
