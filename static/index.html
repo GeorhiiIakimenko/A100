@@ -525,42 +525,90 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function formatMessage(message) {
-    // Регулярное выражение для поиска URL изображений
     const imageRegex = /(https?:\/\/[^\s]+\.(?:jpg|jpeg|png|gif))/gi;
+    let formattedMessage = message.replace(imageRegex, match => `<img src="${match}" alt="Image" />`);
 
-    // Заменяем URL изображений на HTML-элементы img
-    let formattedMessage = message.replace(imageRegex, function(match) {
-        return `<img src="${match}" alt="Image" />`;
-    });
-
-    // Разбиваем сообщение на параграфы
-    const paragraphs = formattedMessage.split('\n\n');
-
+    const lines = formattedMessage.split('\n');
     let formattedHTML = '<div class="content">';
+    let inList = false;
+    let listType = '';
+    let listItems = [];
+    let listCounter = 0;
 
-    paragraphs.forEach((paragraph, index) => {
-        // Проверяем, является ли параграф заголовком
-        if (paragraph.startsWith('# ')) {
-            formattedHTML += `<h3>${paragraph.substring(2)}</h3>`;
-        }
-        // Проверяем, является ли параграф списком
-        else if (paragraph.match(/^\d+\.\s/m) || paragraph.match(/^-\s/m)) {
-            const listItems = paragraph.split('\n');
-            const listType = paragraph.match(/^\d+\.\s/m) ? 'ol' : 'ul';
-            formattedHTML += `<${listType}>`;
-            listItems.forEach(item => {
-                formattedHTML += `<li>${formatInlineStyles(item.replace(/^\d+\.\s|-\s/, ''))}</li>`;
+    lines.forEach((line, index) => {
+        const trimmedLine = line.trim();
+
+        if (trimmedLine.startsWith('# ')) {
+            if (inList) {
+                formattedHTML += formatList(listType, listItems);
+                inList = false;
+                listItems = [];
+                listCounter = 0;
+            }
+            formattedHTML += `<h3>${trimmedLine.substring(2)}</h3>`;
+        } else if (trimmedLine.match(/^\d+\.\s/)) {
+            if (!inList || listType !== 'ol') {
+                if (inList) {
+                    formattedHTML += formatList(listType, listItems);
+                    listItems = [];
+                }
+                inList = true;
+                listType = 'ol';
+                listCounter = parseInt(trimmedLine.match(/^\d+/)[0]);
+            }
+            listItems.push({
+                content: formatInlineStyles(trimmedLine.replace(/^\d+\.\s/, '')),
+                number: listCounter++
             });
-            formattedHTML += `</${listType}>`;
-        }
-        // Обычный параграф
-        else {
-            formattedHTML += `<p>${formatInlineStyles(paragraph)}</p>`;
+        } else if (trimmedLine.startsWith('- ')) {
+            if (!inList || listType !== 'ul') {
+                if (inList) {
+                    formattedHTML += formatList(listType, listItems);
+                    listItems = [];
+                }
+                inList = true;
+                listType = 'ul';
+            }
+            listItems.push(formatInlineStyles(trimmedLine.substring(2)));
+        } else {
+            if (inList) {
+                formattedHTML += formatList(listType, listItems);
+                inList = false;
+                listItems = [];
+                listCounter = 0;
+            }
+            if (trimmedLine !== '') {
+                formattedHTML += `<p>${formatInlineStyles(trimmedLine)}</p>`;
+            } else {
+                formattedHTML += '<br>';
+            }
         }
     });
+
+    if (inList) {
+        formattedHTML += formatList(listType, listItems);
+    }
 
     formattedHTML += '</div>';
     return formattedHTML;
+}
+
+function formatList(type, items) {
+    if (type === 'ol') {
+        return `<ol style="list-style-type: none; padding-left: 0;">
+            ${items.map(item => `<li style="counter-increment: item; margin-bottom: 5px;">
+                <span style="font-weight: bold; margin-right: 5px;">${item.number}.</span>
+                ${item.content}
+            </li>`).join('')}
+        </ol>`;
+    } else {
+        return `<ul style="list-style-type: none; padding-left: 0;">
+            ${items.map(item => `<li style="margin-bottom: 5px;">
+                <span style="font-weight: bold; margin-right: 5px;">•</span>
+                ${item}
+            </li>`).join('')}
+        </ul>`;
+    }
 }
 
 function formatInlineStyles(text) {
